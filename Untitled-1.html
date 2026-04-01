@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Queue-Snake: Minimal Mono</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f9fafb;
+            color: #1f2937;
+            overflow: hidden;
+            touch-action: none;
+        }
+        
+        canvas {
+            background-color: #ffffff;
+            image-rendering: pixelated;
+        }
+
+        .soft-shadow {
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+        }
+        
+        .heavy-shadow {
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+        }
+    </style>
+</head>
+<body class="flex items-center justify-center min-h-screen">
+
+    <div class="relative flex flex-col items-center">
+        <!-- Header / UI -->
+        <div class="w-full max-w-[600px] flex justify-between items-end mb-4 px-2">
+            <div>
+                <h1 class="text-3xl font-extrabold text-gray-900 tracking-tight">QUEUE-SNAKE</h1>
+                <p class="text-xs text-gray-500 font-semibold mt-1">DATA PREDATOR PROTOCOL</p>
+            </div>
+            <div class="text-right">
+                <div class="text-sm text-gray-500 font-semibold">HIGH SCORE: <span id="highScore" class="text-gray-800">0</span></div>
+                <div class="text-xl font-bold text-gray-900">SCORE: <span id="score" class="text-blue-600">0</span></div>
+                <div class="text-xs text-gray-400 mt-1 font-semibold">SPEED: <span id="speedLevel">1.0</span>x</div>
+            </div>
+        </div>
+
+        <!-- Game Container -->
+        <div class="relative rounded-xl overflow-hidden bg-white border border-gray-200 heavy-shadow">
+            <canvas id="gameCanvas" width="600" height="600" class="block"></canvas>
+
+            <!-- Overlays -->
+            <div id="startScreen" class="absolute inset-0 bg-white/90 backdrop-blur-sm flex flex-col items-center justify-center z-20 transition-opacity duration-300">
+                <h2 class="text-4xl font-extrabold text-gray-900 mb-6 text-center">SYSTEM READY</h2>
+                <p class="text-gray-600 mb-4 font-medium">방향키(↑↓←→) 또는 WASD로 이동</p>
+                
+                <div class="bg-gray-50 p-4 rounded-lg border border-gray-200 mb-8 flex flex-col gap-3 soft-shadow">
+                    <div class="flex items-center gap-3">
+                        <div class="w-4 h-4 bg-blue-500 rounded-sm"></div> 
+                        <span class="text-sm font-semibold text-gray-700">정상 데이터 (Enqueue, 길이+)</span>
+                    </div>
+                    <div class="flex items-center gap-3">
+                        <div class="w-4 h-4 bg-red-500 rounded-sm"></div> 
+                        <span class="text-sm font-semibold text-gray-700">손상 데이터 (Dequeue 2회, 길이-)</span>
+                    </div>
+                </div>
+
+                <button id="startBtn" class="px-8 py-3 bg-gray-900 text-white font-bold rounded-lg hover:bg-gray-700 transition-colors soft-shadow">
+                    START PROTOCOL
+                </button>
+            </div>
+
+            <div id="gameOverScreen" class="absolute inset-0 bg-gray-900/90 backdrop-blur-md flex flex-col items-center justify-center z-20 hidden">
+                <h2 class="text-5xl font-black text-red-400 mb-4 tracking-tight">FATAL ERROR</h2>
+                <p class="text-gray-300 text-lg mb-2 font-medium">충돌 감지: 큐 데이터 무결성 손상</p>
+                <div class="bg-gray-800 px-6 py-4 rounded-lg mb-8 border border-gray-700">
+                    <p class="text-gray-400 text-sm font-semibold mb-1">FINAL SCORE</p>
+                    <p id="finalScore" class="text-white font-bold text-4xl text-center">0</p>
+                </div>
+                <button id="restartBtn" class="px-8 py-3 bg-white text-gray-900 font-bold rounded-lg hover:bg-gray-200 transition-colors soft-shadow">
+                    REBOOT SYSTEM
+                </button>
+            </div>
+        </div>
+        
+        <div class="w-full max-w-[600px] mt-4 text-center text-xs text-gray-400 font-medium bg-white py-2 rounded border border-gray-200">
+            * <span class="font-bold text-gray-600">[0]</span>이 머리(최신)입니다. 파란 아이템을 먹으면 빨간 블록의 위치가 재설정됩니다.
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const TILE_SIZE = 30;
+        const TILE_COUNT = canvas.width / TILE_SIZE;
+
+        let snake = []; 
+        let food = { x: 0, y: 0 };
+        let poisons = []; // 빨간 블록 배열
+        let dx = 0;
+        let dy = 0;
+        let nextDx = 0;
+        let nextDy = 0;
+        let score = 0;
+        let highScore = localStorage.getItem('queueSnakeHighScoreMinimal') || 0;
+        let baseSpeed = 8;
+        let currentSpeed = baseSpeed;
+        
+        let lastRenderTime = 0;
+        let isGameOver = false;
+        let isGameRunning = false;
+
+        const scoreEl = document.getElementById('score');
+        const highScoreEl = document.getElementById('highScore');
+        const speedLevelEl = document.getElementById('speedLevel');
+        const startScreen = document.getElementById('startScreen');
+        const gameOverScreen = document.getElementById('gameOverScreen');
+        const finalScoreEl = document.getElementById('finalScore');
+
+        highScoreEl.innerText = highScore;
+
+        function initGame() {
+            snake = [
+                { x: 10, y: 12 }, 
+                { x: 10, y: 11 }, 
+                { x: 10, y: 10 }  
+            ];
+            dx = 0;
+            dy = -1;
+            nextDx = 0;
+            nextDy = -1;
+            score = 0;
+            currentSpeed = baseSpeed;
+            isGameOver = false;
+            
+            updateScore();
+            spawnFood();
+            refreshPoisons(); // 초기 독 생성
+            
+            startScreen.classList.add('hidden');
+            gameOverScreen.classList.add('hidden');
+            isGameRunning = true;
+            requestAnimationFrame(gameLoop);
+        }
+
+        function gameLoop(currentTime) {
+            if (isGameOver || !isGameRunning) return;
+
+            window.requestAnimationFrame(gameLoop);
+
+            const secondsSinceLastRender = (currentTime - lastRenderTime) / 1000;
+            if (secondsSinceLastRender < 1 / currentSpeed) return;
+
+            lastRenderTime = currentTime;
+            update();
+            draw();
+        }
+
+        function update() {
+            dx = nextDx;
+            dy = nextDy;
+
+            const head = snake[snake.length - 1];
+            let newHead = { x: head.x + dx, y: head.y + dy };
+
+            // Portal
+            if (newHead.x < 0) newHead.x = TILE_COUNT - 1;
+            if (newHead.x >= TILE_COUNT) newHead.x = 0;
+            if (newHead.y < 0) newHead.y = TILE_COUNT - 1;
+            if (newHead.y >= TILE_COUNT) newHead.y = 0;
+
+            // Self Collision
+            for (let i = 1; i < snake.length; i++) {
+                if (newHead.x === snake[i].x && newHead.y === snake[i].y) {
+                    handleGameOver();
+                    return;
+                }
+            }
+
+            snake.push(newHead);
+
+            let eatenPoisonIndex = poisons.findIndex(p => p.x === newHead.x && p.y === newHead.y);
+
+            if (newHead.x === food.x && newHead.y === food.y) {
+                // 파란 블록 먹음
+                score += 10;
+                spawnFood();
+                refreshPoisons(); // 모든 빨간 블록 위치 재설정
+                
+                if (score % 70 === 0) currentSpeed += 0.8;
+                updateScore();
+            } else if (eatenPoisonIndex !== -1) {
+                // 빨간 블록 먹음
+                score = Math.max(0, score - 5);
+                snake.shift(); 
+                if (snake.length > 2) {
+                    snake.shift(); 
+                } else {
+                    handleGameOver();
+                    return;
+                }
+                // 먹은 것만 제거하고 나머지는 유지 (파란거 먹을 때만 전체 갱신)
+                poisons.splice(eatenPoisonIndex, 1);
+                ensureMinPoison(); 
+                updateScore();
+            } else {
+                snake.shift();
+            }
+            
+            // 실시간 갯수 유지 체크 (길이가 줄어들거나 늘어났을 때 대비)
+            ensureMinPoison();
+        }
+
+        // 빨간 블록들을 완전히 새로 배치
+        function refreshPoisons() {
+            poisons = [];
+            const targetCount = Math.max(1, Math.floor(snake.length / 10)+1);
+            for(let i = 0; i < targetCount; i++) {
+                spawnOnePoison();
+            }
+        }
+
+        // 최소 갯수 보장 (한 개 먹었을 때나 길이 변화 시 호출)
+        function ensureMinPoison() {
+            const targetCount = Math.max(1, Math.floor(snake.length / 10));
+            while (poisons.length < targetCount) {
+                spawnOnePoison();
+            }
+            while (poisons.length > targetCount) {
+                poisons.pop();
+            }
+        }
+
+        function spawnOnePoison() {
+            let newX, newY;
+            let invalid;
+            do {
+                invalid = false;
+                newX = Math.floor(Math.random() * TILE_COUNT);
+                newY = Math.floor(Math.random() * TILE_COUNT);
+                if (newX === food.x && newY === food.y) invalid = true;
+                if (snake.some(s => s.x === newX && s.y === newY)) invalid = true;
+                if (poisons.some(p => p.x === newX && p.y === newY)) invalid = true;
+            } while (invalid);
+            poisons.push({ x: newX, y: newY });
+        }
+
+        function spawnFood() {
+            let newX, newY;
+            let invalid;
+            do {
+                invalid = false;
+                newX = Math.floor(Math.random() * TILE_COUNT);
+                newY = Math.floor(Math.random() * TILE_COUNT);
+                if (snake.some(s => s.x === newX && s.y === newY)) invalid = true;
+                if (poisons.some(p => p.x === newX && p.y === newY)) invalid = true;
+            } while (invalid);
+            food = { x: newX, y: newY };
+        }
+
+        function draw() {
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // Grid
+            ctx.strokeStyle = '#f3f4f6';
+            ctx.lineWidth = 1;
+            for (let i = 0; i <= TILE_COUNT; i++) {
+                ctx.beginPath();
+                ctx.moveTo(i * TILE_SIZE, 0); ctx.lineTo(i * TILE_SIZE, canvas.height);
+                ctx.stroke();
+                ctx.beginPath();
+                ctx.moveTo(0, i * TILE_SIZE); ctx.lineTo(canvas.width, i * TILE_SIZE);
+                ctx.stroke();
+            }
+
+            // Food
+            ctx.fillStyle = '#3b82f6';
+            ctx.fillRect(food.x * TILE_SIZE + 2, food.y * TILE_SIZE + 2, TILE_SIZE - 4, TILE_SIZE - 4);
+
+            // Poisons
+            ctx.fillStyle = '#ef4444';
+            poisons.forEach(p => {
+                ctx.fillRect(p.x * TILE_SIZE + 2, p.y * TILE_SIZE + 2, TILE_SIZE - 4, TILE_SIZE - 4);
+                ctx.strokeStyle = '#fff';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.moveTo(p.x * TILE_SIZE + 8, p.y * TILE_SIZE + 8);
+                ctx.lineTo(p.x * TILE_SIZE + TILE_SIZE - 8, p.y * TILE_SIZE + TILE_SIZE - 8);
+                ctx.moveTo(p.x * TILE_SIZE + TILE_SIZE - 8, p.y * TILE_SIZE + 8);
+                ctx.lineTo(p.x * TILE_SIZE + 8, p.y * TILE_SIZE + TILE_SIZE - 8);
+                ctx.stroke();
+            });
+
+            // Snake
+            for (let i = 0; i < snake.length; i++) {
+                const segment = snake[i];
+                const isHead = i === snake.length - 1;
+                const x = segment.x * TILE_SIZE;
+                const y = segment.y * TILE_SIZE;
+                const opacity = 0.4 + (0.6 * (i / snake.length));
+                ctx.fillStyle = isHead ? '#111827' : `rgba(75, 85, 99, ${opacity})`; 
+                ctx.fillRect(x + 1, y + 1, TILE_SIZE - 2, TILE_SIZE - 2);
+                
+                const displayIndex = snake.length - 1 - i;
+                ctx.fillStyle = '#ffffff';
+                ctx.font = "bold 12px Inter";
+                ctx.textAlign = "center";
+                ctx.textBaseline = "middle";
+                ctx.fillText(displayIndex.toString(), x + TILE_SIZE / 2, y + TILE_SIZE / 2);
+            }
+        }
+
+        function updateScore() {
+            scoreEl.innerText = score;
+            speedLevelEl.innerText = (currentSpeed / baseSpeed).toFixed(1);
+            if (score > highScore) {
+                highScore = score;
+                highScoreEl.innerText = highScore;
+                localStorage.setItem('queueSnakeHighScoreMinimal', highScore);
+            }
+        }
+
+        function handleGameOver() {
+            isGameOver = true;
+            isGameRunning = false;
+            finalScoreEl.innerText = score;
+            gameOverScreen.classList.remove('hidden');
+        }
+
+        window.addEventListener('keydown', e => {
+            switch (e.key.toLowerCase()) {
+                case 'arrowup': case 'w': if (dy !== 1) { nextDx = 0; nextDy = -1; } break;
+                case 'arrowdown': case 's': if (dy !== -1) { nextDx = 0; nextDy = 1; } break;
+                case 'arrowleft': case 'a': if (dx !== 1) { nextDx = -1; nextDy = 0; } break;
+                case 'arrowright': case 'd': if (dx !== -1) { nextDx = 1; nextDy = 0; } break;
+            }
+        });
+
+        document.getElementById('startBtn').addEventListener('click', initGame);
+        document.getElementById('restartBtn').addEventListener('click', initGame);
+
+        draw();
+    </script>
+</body>
+</html>
